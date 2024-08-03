@@ -6,19 +6,21 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/eclipse/paho.mqtt.golang"
+	"github.com/go-pay/smap"
+	"github.com/go-pay/util/retry"
+	"github.com/go-pay/xlog"
 )
 
 type Client struct {
-	c        *Config
-	mu       sync.Mutex
-	Ops      *mqtt.ClientOptions
-	Mqtt     mqtt.Client
-	Topics   []string
-	SubFuncs map[string]mqtt.MessageHandler // key:topic#qos, value: callback func
+	c       *Config
+	Ops     *mqtt.ClientOptions
+	Timeout time.Duration // connection、subscribe、publish Timeout time, default 10s
+	Mqtt    mqtt.Client
+	Topics  []string
+	SubFunc smap.Map[string, mqtt.MessageHandler] // key:topic#qos, value: callback func
 }
 
 // New 1、New
@@ -34,13 +36,16 @@ func New(c *Config) (mc *Client) {
 	ops.SetUsername(c.Uname)
 	ops.SetPassword(c.Password)
 	if c.KeepAlive > 0 {
-		ops.SetKeepAlive(c.KeepAlive)
+		ops.SetKeepAlive(time.Duration(c.KeepAlive))
 	}
 	ops.SetCleanSession(c.CleanSession)
 	mc = &Client{
-		c:        c,
-		Ops:      ops,
-		SubFuncs: make(map[string]mqtt.MessageHandler),
+		c:       c,
+		Timeout: 10 * time.Second,
+		Ops:     ops,
+	}
+	if c.Timeout > 0 {
+		mc.Timeout = time.Duration(c.Timeout)
 	}
 	return mc
 }
@@ -68,13 +73,24 @@ func (c *Client) StartAndConnect() (err error) {
 	}
 	// new
 	c.Mqtt = mqtt.NewClient(c.Ops)
-	err = Retry(func() error {
+	// connect with retry
+	err = retry.Retry(func() error {
+		var (
+			wait bool
+			e    error
+		)
 		token := c.Mqtt.Connect()
-		if token.Wait() && token.Error() != nil {
-			return token.Error()
+		if c.Timeout > 0 {
+			wait = token.WaitTimeout(c.Timeout)
+		} else {
+			wait = token.Wait()
+		}
+		e = token.Error()
+		if wait && e != nil {
+			return e
 		}
 		return nil
-	}, 3, 3*time.Second)
+	}, 3, 2*time.Second)
 	if err != nil {
 		return err
 	}
@@ -87,23 +103,20 @@ func (c *Client) Close() {
 		_ = c.UnSubscribe(c.Topics...)
 		c.Topics = nil
 	}
-	c.SubFuncs = nil
 	c.Mqtt.Disconnect(1000)
 }
 
 func (c *Client) DefaultOnConnectFunc(cli mqtt.Client) {
-	log.Printf("Clientid [%s] Connected.\n", c.Ops.ClientID)
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	xlog.Warnf("Clientid [%s] Connected.", c.Ops.ClientID)
 	// 若 c.SubFuncs 不为空，连接后注册订阅
-	for key, handler := range c.SubFuncs {
+	c.SubFunc.Range(func(key string, handler mqtt.MessageHandler) bool {
 		// 协程
 		go func(k string, cb mqtt.MessageHandler) {
 			defer func() {
 				if r := recover(); r != nil {
 					buf := make([]byte, 64<<10)
 					buf = buf[:runtime.Stack(buf, false)]
-					log.Printf("reSubscribe: panic recovered: %s\n%s.\n", r, buf)
+					xlog.Errorf("reSubscribe: panic recovered: %s\n%s.", r, buf)
 				}
 			}()
 			split := strings.Split(k, "#")
@@ -119,13 +132,14 @@ func (c *Client) DefaultOnConnectFunc(cli mqtt.Client) {
 				default:
 					qos = QosAtMostOne
 				}
-				err := Retry(func() error {
+				err := retry.Retry(func() error {
 					return c.sub(split[0], qos, cb)
 				}, 3, 2*time.Second)
 				if err != nil {
-					log.Printf("topic[%s] sub callback register err:%+v.\n", split[0], err)
+					xlog.Errorf("topic[%s] sub callback register err:%+v.", split[0], err)
 				}
 			}
 		}(key, handler)
-	}
+		return true
+	})
 }

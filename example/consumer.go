@@ -1,10 +1,10 @@
 package main
 
 import (
-	"log"
 	"time"
 
 	"github.com/eclipse/paho.mqtt.golang"
+	"github.com/go-pay/xlog"
 	"github.com/go-pay/xmqtt"
 )
 
@@ -22,7 +22,7 @@ func main1() {
 	emqx.OnConnectListener(emqx.DefaultOnConnectFunc)
 	// 设置Mqtt断开连接监听
 	emqx.OnConnectLostListener(func(client mqtt.Client, err error) {
-		log.Printf("[%s]IsConnected[%t] lost connection, err: %+v.\n", emqx.Ops.ClientID, client.IsConnected(), err)
+		xlog.Infof("[%s]IsConnected[%t] lost connection, err: %v.", emqx.Ops.ClientID, client.IsConnected(), err)
 		_ = emqx.UnSubscribe(emqx.Topics...)
 	})
 	// 启动连接
@@ -35,19 +35,19 @@ func main1() {
 			Topic:   "topic1",
 			QosType: xmqtt.QosAtMostOne,
 			Callback: func(client mqtt.Client, message mqtt.Message) {
-				log.Printf("topic1: %+v.\n", string(message.Payload()))
+				xlog.Infof("topic1: %s.", string(message.Payload()))
 			},
 		}, {
 			Topic:   "topic2",
 			QosType: xmqtt.QosAtLeastOne,
 			Callback: func(client mqtt.Client, message mqtt.Message) {
-				log.Printf("topic2: %+v.\n", string(message.Payload()))
+				xlog.Infof("topic2: %s.", string(message.Payload()))
 			},
 		}, {
 			Topic:   "topic3",
 			QosType: xmqtt.QosOnlyOne,
 			Callback: func(client mqtt.Client, message mqtt.Message) {
-				log.Printf("topic3: %+v.\n", string(message.Payload()))
+				xlog.Infof("topic3: %s.", string(message.Payload()))
 			},
 		},
 	}

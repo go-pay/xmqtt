@@ -1,9 +1,8 @@
 package main
 
 import (
-	"log"
-
 	"github.com/eclipse/paho.mqtt.golang"
+	"github.com/go-pay/xlog"
 	"github.com/go-pay/xmqtt"
 )
 
@@ -21,7 +20,7 @@ func main2() {
 	emqx.OnConnectListener(emqx.DefaultOnConnectFunc)
 	// 设置Mqtt断开连接监听
 	emqx.OnConnectLostListener(func(client mqtt.Client, err error) {
-		log.Printf("[%s]IsConnected[%t] lost connection, err: %+v.\n", emqx.Ops.ClientID, client.IsConnected(), err)
+		xlog.Infof("[%s]IsConnected[%t] lost connection, err: %+v.", emqx.Ops.ClientID, client.IsConnected(), err)
 	})
 	// 启动连接
 	if err := emqx.StartAndConnect(); err != nil {
